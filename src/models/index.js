@@ -1,9 +1,10 @@
-export { Admin } from "./admin.js";
-export { Student } from "./student.js";
-export { Exam } from "./exam.js";
-export { Question } from "./question.js";
-export { ExamSession } from "./examSession.js";
-export { Response } from "./response.js";
-export { TelemetryEvent } from "./telemetryEvent.js";
-export { ClickTimeseries } from "./clickTimeseries.js";
-export { Counter } from "./counter.js";
+import { createModel } from "../db/modelAdapter.js";
+
+export const Admin = createModel("admins");
+export const Student = createModel("students");
+export const Exam = createModel("exams");
+export const Question = createModel("questions");
+export const ExamSession = createModel("exam_sessions");
+export const Response = createModel("responses");
+export const TelemetryEvent = createModel("telemetry_events");
+export const ClickTimeseries = createModel("click_timeseries");

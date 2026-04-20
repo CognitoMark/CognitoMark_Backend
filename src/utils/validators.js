@@ -61,6 +61,10 @@ export const stressSchema = z.object({
 
 export const submitSchema = z.object({
   feedback: z.string().optional(),
+  responses: z.array(z.object({
+    questionId: z.number().int(),
+    answer: z.string().optional()
+  })).optional(),
 });
 
 export const violationSchema = z.object({

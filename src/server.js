@@ -27,15 +27,54 @@ app.use("/api/admin", adminRoutes);
 app.use("/api/students", studentRoutes);
 app.use("/api", sessionRoutes);
 
+// Catch-all 404 for API
+app.use((req, res) => {
+  res.status(404).json({ error: `Path ${req.path} not found` });
+});
+
 app.use(errorHandler);
 
-const PORT = process.env.PORT || 5000;
+const HOST = process.env.HOST || "0.0.0.0";
+const START_PORT = Number(process.env.PORT || 5000);
+const PORT_RETRIES = Number(process.env.PORT_RETRIES || 10);
 const server = http.createServer(app);
 
-await initDb();
-initSockets(server);
+const startServer = async () => {
+  await initDb();
+  initSockets(server);
 
-server.listen(PORT, "0.0.0.0", () => {
+  const listenWithRetry = (port, retriesLeft) =>
+    new Promise((resolve, reject) => {
+      const onListening = () => {
+        server.off("error", onError);
+        resolve(port);
+      };
+
+      const onError = (error) => {
+        server.off("listening", onListening);
+
+        if (error?.code === "EADDRINUSE" && retriesLeft > 0) {
+          const nextPort = port + 1;
+          // eslint-disable-next-line no-console
+          console.warn(
+            `Port ${port} is already in use. Retrying on ${nextPort}...`,
+          );
+          resolve(listenWithRetry(nextPort, retriesLeft - 1));
+          return;
+        }
+
+        reject(error);
+      };
+
+      server.once("listening", onListening);
+      server.once("error", onError);
+      server.listen(port, HOST);
+    });
+
+  const activePort = await listenWithRetry(START_PORT, PORT_RETRIES);
+
   // eslint-disable-next-line no-console
-  console.log(`Backend running on http://localhost:${PORT}`);
-});
+  console.log(`Backend running on http://localhost:${activePort}`);
+};
+
+await startServer();

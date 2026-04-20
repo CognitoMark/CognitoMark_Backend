@@ -10,6 +10,7 @@ import {
   submitSchema,
   violationSchema,
 } from "../utils/validators.js";
+import { requireStudent } from "../middlewares/auth.js";
 import {
   getClickSeries,
   logAnswerSelection,
@@ -23,6 +24,8 @@ import {
 } from "../controllers/sessionController.js";
 
 const router = Router();
+
+router.use(requireStudent);
 
 router.post("/sessions/:sessionId/response", validate(responseSchema), saveResponse);
 router.post(

@@ -3,7 +3,7 @@
 The engine behind the High-Fidelity Exam Portal. Handles real-time telemetry, session management, and secure administrative operations.
 
 ![Express.js](https://img.shields.io/badge/Express.js-000000?style=for-the-badge&logo=express&logoColor=white)
-![MongoDB](https://img.shields.io/badge/MongoDB-47A248?style=for-the-badge&logo=mongodb&logoColor=white)
+![SQLite](https://img.shields.io/badge/SQLite-003B57?style=for-the-badge&logo=sqlite&logoColor=white)
 ![Socket.io](https://img.shields.io/badge/Socket.io-010101?style=for-the-badge&logo=socket.io&logoColor=white)
 ![JWT](https://img.shields.io/badge/JWT-black?style=for-the-badge&logo=JSON%20web%20tokens)
 ![Zod](https://img.shields.io/badge/Zod-3E67B1?style=for-the-badge&logo=zod&logoColor=white)
@@ -14,11 +14,11 @@ The engine behind the High-Fidelity Exam Portal. Handles real-time telemetry, se
 
 | Path | Description |
 | :--- | :--- |
-| `src/server.js` | Entry point. Configures Express, Sockets, and connects to MongoDB. |
+| `src/server.js` | Entry point. Configures Express, Sockets, and connects to SQLite. |
 | `src/controllers/adminController.js` | Administrative logic: Exam management, reporting, and exports. |
 | `src/controllers/sessionController.js` | Core exam logic: Telemetry logging, answer auto-saving, and integrity checks. |
 | `src/controllers/studentController.js` | Student identity management and login logic. |
-| `src/models/` | Mongoose schemas for `admins`, `students`, `exams`, `questions`, `sessions`, `telemetry`, etc. |
+| `src/models/` | SQLite-backed model adapters for `admins`, `students`, `exams`, `questions`, `sessions`, `telemetry`, etc. |
 | `src/routes/` | API route definitions for Admin, Student, and Session endpoints. |
 | `src/sockets/` | Real-time event orchestration via Socket.IO. |
 | `src/middlewares/auth.js` | JWT authentication guard for protected routes. |
@@ -32,7 +32,7 @@ The engine behind the High-Fidelity Exam Portal. Handles real-time telemetry, se
 sequenceDiagram
     participant S as Student Frontend
     participant B as Backend (Express)
-    participant D as MongoDB
+    participant D as SQLite
     participant A as Admin Dashboard
 
     S->>B: Login (Student ID)
@@ -54,7 +54,7 @@ sequenceDiagram
 
 ## 🗄️ Database Reference
 
-This project uses a relational-style architecture within MongoDB using sequential IDs for frontend compatibility.
+This project uses SQLite with collection-like document tables and sequential IDs for frontend compatibility.
 
 ### Core Collections
 
@@ -73,7 +73,7 @@ This project uses a relational-style architecture within MongoDB using sequentia
 1. `cd backend`
 2. `npm install`
 3. Configure `.env`:
-   - `MONGODB_URI`
-   - `JWT_SECRET`
-   - `CLIENT_ORIGIN`
+    - `SQLITE_PATH`
+    - `JWT_SECRET`
+    - `CLIENT_ORIGIN`
 4. `npm run dev`

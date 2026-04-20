@@ -7,10 +7,12 @@ import {
   deleteExam,
   deleteQuestion,
   deleteStudent,
+  exportDatabase,
   getDashboardLive,
   getExamQuestions,
   getExams,
   getSessionDetail,
+  getSessionsDetailsBulk,
   getSessions,
   getStudents,
   loginAdmin,
@@ -53,7 +55,9 @@ router.delete("/questions/:id", requireAdmin, deleteQuestion);
 router.get("/students", requireAdmin, getStudents);
 router.delete("/students/:id", requireAdmin, deleteStudent);
 router.get("/sessions", requireAdmin, getSessions);
+router.post("/sessions/bulk-details", requireAdmin, getSessionsDetailsBulk);
 router.get("/sessions/:sessionId", requireAdmin, getSessionDetail);
+router.get("/export", requireAdmin, exportDatabase);
 router.post("/reset", requireAdmin, validate(resetSchema), resetDatabase);
 
 export default router;

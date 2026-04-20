@@ -1,4 +1,4 @@
-import { getCollection, getNextSequence } from "../db/database.js";
+import { getNextSequence, setSequenceAtLeast } from "../db/database.js";
 import { getIo } from "../sockets/index.js";
 import {
   ClickTimeseries,
@@ -33,11 +33,7 @@ const syncTelemetryCounter = async () => {
     .lean();
   const latestId = Number(latest?.id);
   if (Number.isFinite(latestId)) {
-    await getCollection("counters").updateOne(
-      { _id: "telemetry_events" },
-      { $set: { seq: latestId } },
-      { upsert: true },
-    );
+    await setSequenceAtLeast("telemetry_events", latestId);
   }
 };
 
@@ -165,6 +161,10 @@ export const saveResponse = async (req, res, next) => {
       return res.status(404).json({ error: "Session not found" });
     }
 
+    if (session.student_id !== req.student.id) {
+      return res.status(403).json({ error: "Access denied" });
+    }
+
     const [existingResponse, question] = await Promise.all([
       responses()
         .findOne({ session_id: parsedSessionId, question_id: parsedQuestionId })
@@ -262,6 +262,10 @@ export const logAnswerSelection = async (req, res, next) => {
       return res.status(404).json({ error: "Session not found" });
     }
 
+    if (session.student_id !== req.student.id) {
+      return res.status(403).json({ error: "Access denied" });
+    }
+
     const question = await questions()
       .findOne({ id: parsedQuestionId })
       .select({ type: 1, _id: 0 })
@@ -292,6 +296,15 @@ export const updateClicks = async (req, res, next) => {
       return res.status(400).json({ error: "Invalid session id" });
     }
 
+    const session = await findSessionById(parsedSessionId);
+    if (!session) {
+      return res.status(404).json({ error: "Session not found" });
+    }
+
+    if (session.student_id !== req.student.id) {
+      return res.status(403).json({ error: "Access denied" });
+    }
+
     await examSessions().updateOne(
       { id: parsedSessionId },
       { $set: { total_clicks: totalClicks } },
@@ -320,6 +333,15 @@ export const updateStress = async (req, res, next) => {
     const parsedSessionId = toNumber(sessionId);
     if (!parsedSessionId) {
       return res.status(400).json({ error: "Invalid session id" });
+    }
+
+    const session = await findSessionById(parsedSessionId);
+    if (!session) {
+      return res.status(404).json({ error: "Session not found" });
+    }
+
+    if (session.student_id !== req.student.id) {
+      return res.status(403).json({ error: "Access denied" });
     }
 
     await examSessions().updateOne(
@@ -368,6 +390,10 @@ export const logClickFrequency = async (req, res, next) => {
     const session = await findSessionById(parsedSessionId);
     if (!session) {
       return res.status(404).json({ error: "Session not found" });
+    }
+
+    if (session.student_id !== req.student.id) {
+      return res.status(403).json({ error: "Access denied" });
     }
 
     if (session.submitted_at) {
@@ -473,6 +499,10 @@ export const logNavigation = async (req, res, next) => {
       return res.status(404).json({ error: "Session not found" });
     }
 
+    if (session.student_id !== req.student.id) {
+      return res.status(403).json({ error: "Access denied" });
+    }
+
     if (session.submitted_at) {
       return res.json({ success: true, ignored: true, reason: "submitted" });
     }
@@ -523,6 +553,10 @@ export const getClickSeries = async (req, res, next) => {
       return res.status(404).json({ error: "Session not found" });
     }
 
+    if (session.student_id !== req.student.id) {
+      return res.status(403).json({ error: "Access denied" });
+    }
+
     const total = await clickTimeseries().countDocuments({
       session_id: parsedSessionId,
     });
@@ -542,7 +576,7 @@ export const getClickSeries = async (req, res, next) => {
 export const submitExam = async (req, res, next) => {
   try {
     const { sessionId } = req.params;
-    const { feedback } = req.body;
+    const { feedback, responses: submittedResponses } = req.body;
     const parsedSessionId = toNumber(sessionId);
     if (!parsedSessionId) {
       return res.status(400).json({ error: "Invalid session id" });
@@ -551,6 +585,10 @@ export const submitExam = async (req, res, next) => {
     const session = await findSessionById(parsedSessionId);
     if (!session) {
       return res.status(404).json({ error: "Session not found" });
+    }
+
+    if (session.student_id !== req.student.id) {
+      return res.status(403).json({ error: "Access denied" });
     }
     if (session.submitted_at) {
       return res.status(400).json({ error: "Exam already submitted" });
@@ -561,6 +599,37 @@ export const submitExam = async (req, res, next) => {
       return res
         .status(400)
         .json({ error: "Exam cannot be submitted without any questions" });
+    }
+
+    if (Array.isArray(submittedResponses) && submittedResponses.length > 0) {
+      const now = new Date();
+      for (const { questionId, answer } of submittedResponses) {
+        const parsedQId = Number(questionId);
+        if (!parsedQId || typeof answer !== "string") continue;
+        
+        try {
+          const responseId = await getNextSequence("responses");
+          await responses().updateOne(
+            { session_id: parsedSessionId, question_id: parsedQId },
+            {
+              $set: { answer, updated_at: now },
+              $setOnInsert: {
+                id: responseId,
+                session_id: parsedSessionId,
+                question_id: parsedQId,
+                created_at: now,
+              },
+            },
+            { upsert: true }
+          );
+        } catch (error) {
+          if (error?.code !== 11000) throw error;
+          await responses().updateOne(
+            { session_id: parsedSessionId, question_id: parsedQId },
+            { $set: { answer, updated_at: now } }
+          );
+        }
+      }
     }
 
     const answeredQuestions = await countAnsweredQuestions(parsedSessionId);
@@ -655,6 +724,10 @@ export const logViolation = async (req, res, next) => {
     const session = await findSessionById(parsedSessionId);
     if (!session) {
       return res.status(404).json({ error: "Session not found" });
+    }
+
+    if (session.student_id !== req.student.id) {
+      return res.status(403).json({ error: "Access denied" });
     }
 
     if (session.submitted_at) {

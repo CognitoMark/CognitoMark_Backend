@@ -1,11 +1,15 @@
 import bcrypt from "bcryptjs";
 import jwt from "jsonwebtoken";
-import { getNextSequence } from "../db/database.js";
+import {
+  getNextSequence,
+  listCollectionDocs,
+  listSequences,
+  resetSequences,
+} from "../db/database.js";
 import { getIo } from "../sockets/index.js";
 import {
   Admin,
   ClickTimeseries,
-  Counter,
   Exam,
   ExamSession,
   Question,
@@ -29,6 +33,17 @@ const telemetry = () => TelemetryEvent;
 const clickTimeseries = () => ClickTimeseries;
 
 const VIOLATION_TYPES = ["TAB_SWITCH", "MINIMIZE", "FULLSCREEN_EXIT"];
+
+const EXPORT_COLLECTIONS = Object.freeze([
+  "admins",
+  "students",
+  "exams",
+  "questions",
+  "exam_sessions",
+  "responses",
+  "telemetry_events",
+  "click_timeseries",
+]);
 
 export const loginAdmin = async (req, res, next) => {
   try {
@@ -778,14 +793,46 @@ export const resetDatabase = async (req, res, next) => {
       responses().deleteMany({}),
       telemetry().deleteMany({}),
       clickTimeseries().deleteMany({}),
-      Counter.updateMany(
-        { _id: { $in: ["students", "exam_sessions", "responses", "telemetry_events", "click_timeseries"] } },
-        { $set: { seq: 0 } },
-      ),
+    ]);
+
+    await resetSequences([
+      "students",
+      "exam_sessions",
+      "responses",
+      "telemetry_events",
+      "click_timeseries",
     ]);
 
     getIo().emit("reset");
     return res.json({ success: true });
+  } catch (error) {
+    return next(error);
+  }
+};
+
+export const exportDatabase = async (req, res, next) => {
+  try {
+    const collections = Object.fromEntries(
+      EXPORT_COLLECTIONS.map((name) => [name, listCollectionDocs(name)]),
+    );
+
+    const payload = {
+      exported_at: new Date().toISOString(),
+      counts: Object.fromEntries(
+        Object.entries(collections).map(([name, docs]) => [name, docs.length]),
+      ),
+      counters: listSequences(),
+      collections,
+    };
+
+    const filenameTimestamp = payload.exported_at.replace(/[.:]/g, "-");
+    res.setHeader("Content-Type", "application/json; charset=utf-8");
+    res.setHeader(
+      "Content-Disposition",
+      `attachment; filename="cognitomark-backup-${filenameTimestamp}.json"`,
+    );
+
+    return res.status(200).send(JSON.stringify(payload, null, 2));
   } catch (error) {
     return next(error);
   }
@@ -966,13 +1013,7 @@ export const getSessions = async (req, res, next) => {
   }
 };
 
-export const getSessionDetail = async (req, res, next) => {
-  try {
-    const sessionId = toNumber(req.params.sessionId);
-    if (!sessionId) {
-      return res.status(400).json({ error: "Invalid session id" });
-    }
-
+const fetchDetailForSession = async (sessionId) => {
     const sessionRows = await examSessions()
       .aggregate([
         { $match: { id: sessionId } },
@@ -1097,7 +1138,7 @@ export const getSessionDetail = async (req, res, next) => {
 
     const session = sessionRows[0];
     if (!session) {
-      return res.status(404).json({ error: "Session not found" });
+      return null;
     }
 
     const responsesList = await responses()
@@ -1157,6 +1198,7 @@ export const getSessionDetail = async (req, res, next) => {
             question_id: 1,
             answer: 1,
             is_correct: 1,
+            created_at: 1,
             updated_at: 1,
             text: "$question.text",
             type: "$question.type",
@@ -1397,9 +1439,81 @@ export const getSessionDetail = async (req, res, next) => {
       .lean();
 
     const clickWindows = await clickTimeseries()
-      .find({ session_id: sessionId, question_id: { $ne: null } })
-      .select({ _id: 0, question_id: 1, window_start: 1, window_end: 1 })
-      .lean();
+      .aggregate([
+        { $match: { session_id: sessionId } },
+        {
+          $lookup: {
+            from: "questions",
+            localField: "question_id",
+            foreignField: "id",
+            as: "question",
+          },
+        },
+        { $addFields: { question: { $first: "$question" } } },
+        {
+          $project: {
+            _id: 0,
+            id: 1,
+            question_id: 1,
+            question_text: "$question.text",
+            window_start: 1,
+            window_end: 1,
+            click_count: 1,
+            header_clicks: 1,
+            integrity_clicks: 1,
+            stress_clicks: 1,
+            panel_clicks: 1,
+            question_clicks: 1,
+            footer_clicks: 1,
+            other_clicks: 1,
+            stress_level: 1,
+            created_at: 1,
+          },
+        },
+        { $sort: { window_start: 1, id: 1 } },
+      ])
+      .exec();
+
+    const telemetryEvents = await telemetry()
+      .aggregate([
+        { $match: { session_id: sessionId } },
+        {
+          $lookup: {
+            from: "questions",
+            localField: "question_id",
+            foreignField: "id",
+            as: "question",
+          },
+        },
+        {
+          $lookup: {
+            from: "questions",
+            localField: "to_question_id",
+            foreignField: "id",
+            as: "to_question",
+          },
+        },
+        {
+          $project: {
+            _id: 0,
+            id: 1,
+            session_id: 1,
+            question_id: 1,
+            question_text: { $first: "$question.text" },
+            to_question_id: 1,
+            to_question_text: { $first: "$to_question.text" },
+            from_question_number: 1,
+            to_question_number: 1,
+            direction: 1,
+            type: 1,
+            created_at: 1,
+            updated_at: 1,
+            value: 1,
+          },
+        },
+        { $sort: { created_at: 1, id: 1 } },
+      ])
+      .exec();
 
     const resolveViolationQuestionId = (violation) => {
       if (Number.isFinite(violation.question_id)) {
@@ -1452,7 +1566,7 @@ export const getSessionDetail = async (req, res, next) => {
       ? session.score_obtained
       : computedScore;
 
-    return res.json({
+    return {
       session: {
         ...session,
         score_total: scoreTotal,
@@ -1474,8 +1588,45 @@ export const getSessionDetail = async (req, res, next) => {
           answerSwitchesByQuestion[r.question_id]?.length ||
           0,
       })),
+      clickWindows,
       navigationTransitions,
-    });
+      telemetryEvents,
+    };
+};
+
+export const getSessionDetail = async (req, res, next) => {
+  try {
+    const sessionId = toNumber(req.params.sessionId);
+    if (!sessionId) {
+      return res.status(400).json({ error: "Invalid session id" });
+    }
+    const detail = await fetchDetailForSession(sessionId);
+    if (!detail) {
+      return res.status(404).json({ error: "Session not found" });
+    }
+    return res.json(detail);
+  } catch (error) {
+    return next(error);
+  }
+};
+
+export const getSessionsDetailsBulk = async (req, res, next) => {
+  try {
+    const { sessionIds } = req.body;
+    if (!Array.isArray(sessionIds)) {
+      return res.status(400).json({ error: "Invalid sessionIds array" });
+    }
+    const results = [];
+    for (const id of sessionIds) {
+      const parsedId = toNumber(id);
+      if (parsedId) {
+        const detail = await fetchDetailForSession(parsedId);
+        if (detail) {
+          results.push(detail);
+        }
+      }
+    }
+    return res.json({ details: results });
   } catch (error) {
     return next(error);
   }
